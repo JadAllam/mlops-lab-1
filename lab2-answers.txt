@@ -3,103 +3,57 @@ LAB 2 - ANSWERS
 
 Q1 - Look at pyproject.toml and uv.lock. What changed?
 
-pyproject.toml got 4 new dependencies: mlflow, scikit-learn, torch, torchvision.
-Since I used the CPU-only build it also got a [[tool.uv.index]] pointing to
-download.pytorch.org/whl/cpu and a [tool.uv.sources] so torch and torchvision
-come from that index.
-
-uv.lock went from 2 packages (the project and pillow) to 105. It now has every
-dependency of mlflow and torch with the exact version and hashes. torch is locked
-as 2.14.0+cpu from the pytorch cpu index.
+pyproject.toml got mlflow, scikit-learn, torch and torchvision as dependencies,
+plus the pytorch cpu index for torch and torchvision.
+uv.lock went from 2 packages to 105, all locked with exact versions and hashes.
 
 
 Q2 - What is --backend-store-uri used for? What is --default-artifact-root used for?
      What is the difference between the metadata and the artifacts?
 
---backend-store-uri        where mlflow keeps the metadata, here a sqlite file mlflow.db
---default-artifact-root    where it puts the artifacts, here the ./mlruns folder
+--backend-store-uri        where the metadata goes (mlflow.db)
+--default-artifact-root    where the artifacts go (./mlruns)
 
-Metadata is the small stuff: experiments, runs, params, metrics, tags. Things you
-can search and sort on, like lr=0.001 or val_accuracy=0.55.
-Artifacts are files, like the saved model, which can be big.
+Metadata is experiments, runs, params and metrics.
+Artifacts are files, like the saved model.
 
 
 Q3 - Why shouldn't mlflow.db and mlruns/ be tracked by git, and why not by dvc either?
 
-git: they are outputs of running the code, not code. mlflow.db is a binary file
-that changes after every run and mlruns/ gets a saved model for every run (about
-45MB each), so the repo would get big fast. They also have absolute paths from my
-machine inside them.
-
-dvc: dvc is for the data that goes into the pipeline, that we want to version and
-pull back. The runs are already stored and versioned by mlflow, that's the job of
-the tracking server. With dvc every new run would just make a new version of
-mlflow.db.
+git: they are run outputs, not code, and they get big (45MB model per run).
+dvc: dvc is for versioning data, mlflow already stores and versions the runs.
 
 
 Q4 - What happens the first time you call set_experiment with a name that doesn't exist yet?
 
-mlflow creates it. The first run printed:
-
-    INFO mlflow.tracking.fluent: Experiment with name 'food11' does not exist. Creating a new experiment.
-
-In the UI food11 shows up under Default with id 1. After that set_experiment just
-uses the existing one.
+mlflow creates it. food11 shows up in the UI next to Default.
 
 
 Q5 - What is the difference between log_param and log_metric? Why does log_metric
      take a step argument and log_param doesn't?
 
-log_param is for a value set before training that stays the same for the whole
-run, like lr or batch size. It's logged once, logging the same param again with a
-different value gives an error.
-
-log_metric is for a number that changes during training, like the loss. The same
-key can be logged many times. step says which epoch the value belongs to, so mlflow
-can draw the curve over the epochs. A param only has one value so it has no step.
+log_param is a fixed value for the run, like lr. log_metric is a value that changes
+during training, like the loss.
+A metric is logged every epoch so step says which epoch it's from. A param is
+logged once so it doesn't need one.
 
 
 Q6 - Find the params, the metric charts, and the logged model artifact. Where does
      the model artifact actually live on disk?
 
-Params     Parameters table on the run page: batch_size, dataset, epochs, lr, model
-Metrics    Model metrics tab, one chart each for train_loss, val_loss, val_accuracy
-           over steps 0-4, test_accuracy is a single point
-Model      Logged models / Artifacts section of the run, called "model"
-
-On disk it's in the artifact root, under the experiment id (1), not in mlflow.db:
-
-    mlruns/1/models/m-2860e0dca282428d9ee8ecf2cf2b3477/artifacts/
-        MLmodel, conda.yaml, requirements.txt, python_env.yaml, input_example.json
-        data/model.pt2      45MB, the weights
-
-In mlflow 3 the model gets its own id (m-...) and folder, the run only links to it.
+mlruns/1/models/m-<model id>/artifacts/data/model.pt2
 
 
 Q7 - Which learning rate gave the best val_accuracy? Is higher always better?
 
-    lr       batch   val_accuracy   test_accuracy
-    0.01     32      0.221          0.235
-    0.001    32      0.539          0.575
-    0.0001   32      0.714          0.767
-    0.001    64      0.615          0.649
-
-lr 0.0001 was the best. No, higher was worse here. With 0.01 the val loss hit 72
-after the first epoch, the steps are too big and wreck the pretrained weights. A
-small lr only adjusts them a bit.
+lr 0.0001 (0.714). No, lr 0.01 was the worst (0.221).
 
 
 Q8 - Parallel coordinates plot with lr, batch_size and val_accuracy. What pattern do you see?
 
-The lower the lr the higher the val_accuracy, the lines cross from low lr to high
-accuracy. At the same lr 0.001, batch 64 got 0.615 and batch 32 got 0.539. A bigger
-batch means fewer and smoother updates per epoch, a bit like a smaller lr, so it
-fits the same pattern. It's only one run per setting on the mini set though, so the
-numbers are noisy.
+Lower lr gives higher val_accuracy. At lr 0.001, batch 64 did better than batch 32.
 
 
 Q9 - Sort by val_accuracy descending. Which run is the best one?
 
-fearless-elk-198
-run ID 03651f2099de4273b3d809a02f14356a
-lr 0.0001, batch size 32, val_accuracy 0.7135, test_accuracy 0.7673
+03651f2099de4273b3d809a02f14356a (lr 0.0001, batch 32)
