@@ -1,0 +1,114 @@
+LAB 3 - ANSWERS
+
+
+Q1 - What version number was your model given? What's the difference between a run's
+     logged model artifact and a registered model?
+
+Version 1.
+
+(ended up at version 3 later: the lab 2 runs wrote artifacts as local file paths, which
+the container can't read, so the server was restarted with --serve-artifacts and the model
+re-logged so it gets fetched over http. champion points at 3.)
+
+The logged artifact is just a file sitting inside the run folder, tied to that one run.
+The registered model is a name in the registry (food11) with its own version numbers,
+so you ask for it by name instead of by run id. Same files, different way to find them.
+
+
+Q2 - What aliases replaced the old built-in stages? Why version a model separately from
+     the run, and why is an alias more flexible than a fixed stage name?
+
+champion and challenger instead of Staging and Production.
+
+The run is a record of what happened in training and never changes. The model version
+is the thing you deploy, and it can come from any run. Keeping them apart means you can
+register several runs under one name and compare versions.
+
+An alias is just a pointer you can move. To roll back you point champion at the old
+version, you don't touch the versions themselves. And you can make up your own names,
+the old stages were a fixed list.
+
+
+Q3 - Why load the model through models:/food11@champion instead of the .pth file?
+     What would you change to serve a newer version?
+
+The uri doesn't name a file or a path, so the serving code doesn't care where the model
+lives or which run made it. mlflow also saves the environment with the model so it loads
+the same way everywhere.
+
+To serve a newer version you change nothing in the code. You point the champion alias at
+the new version and restart the container.
+
+
+Q4 - Why copy pyproject.toml/uv.lock and run uv sync before copying the source?
+     What happens to the cache when you change a line in serve.py?
+
+Docker caches each layer and reuses it if nothing above it changed. Dependencies change
+rarely, source changes constantly. If you copy everything at once then every edit
+invalidates the install layer and reinstalls torch every time.
+
+Changing serve.py only invalidates the COPY src layer and everything after it. The uv
+sync layer is still cached so the rebuild takes seconds.
+
+
+Q5 - Size difference between a naive single-stage image and the multi-stage one?
+
+multi-stage    2.46 GB   (python:3.11-slim base)
+single-stage   3.62 GB   (python:3.11 base)
+
+about 1.2 GB difference.
+
+docker history, biggest layers:
+
+multi-stage    1.79GB  COPY /app/.venv
+               48.8MB  base image apt layer
+                45kB   COPY src
+
+single-stage   1.48GB  RUN uv sync
+               48.7MB  COPY . .
+               43.2MB  COPY /uv
+
+The big layer is the venv either way, torch is most of it. The saving comes from the base
+image: python:3.11 carries the build toolchain, python:3.11-slim doesn't, and the builder
+stage with uv and its caches never reaches the final image.
+
+
+Q6 - What happens if you forget the .dockerignore? Which excluded folders would break
+     the build?
+
+Everything in the folder gets sent to the docker daemon first, so the build context goes
+from a few hundred KB to a few GB and every build starts with a long upload.
+
+Nothing in the list actually breaks the build, but .venv/ comes closest. It has windows
+paths and binaries baked in, so if it got copied over the linux venv the container would
+have a broken interpreter. data/ and mlruns/ just make the image huge for no reason.
+
+
+Q7 - Why can't the container use 127.0.0.1:5000? What does host.docker.internal resolve to?
+
+Inside the container 127.0.0.1 is the container itself, not the laptop. Nothing is
+listening on port 5000 in there so it gets connection refused.
+
+host.docker.internal is a name docker sets up that resolves to the host machine's ip from
+inside the container. On linux there is no gateway in the way so --network host works
+instead.
+
+
+Q8 - Stop the container and start a new one. Does the model still load without rebuilding?
+
+Yes. It loads at startup every time.
+
+The image only has the code and the python packages. The model isn't in it, it gets
+pulled from mlflow when the container starts. That's why a new model version needs no
+rebuild, and also why the container is useless if mlflow is down.
+
+
+Q9 - What's still missing before another machine could pull and run this exact image?
+
+The image only exists on this laptop. It needs to be pushed to a registry so another
+machine can pull it.
+
+latest is a moving tag, so it also needs a real version tag or the digest, otherwise the
+other machine can't be sure it got the same build. And mlflow is on 127.0.0.1 here, so a
+CI runner or a cluster would need a tracking server they can actually reach, with
+credentials.
