@@ -1,0 +1,156 @@
+LAB 4 - ANSWERS
+
+
+Q1 - What happens to everything written to /mlflow-data with no volume mounted?
+
+It goes into the container's writable layer, which is deleted with the container.
+
+Ran the image on its own, registered a model, stopped and removed the container, started a
+new one from the same image: the experiment is gone.
+
+    before:  Default, q1-test
+    after:   Default
+
+/mlflow-data isn't a volume, it's just a directory in the container, so docker rm takes
+mlflow.db and mlruns with it.
+
+
+Q2 - Why a named volume instead of a bind mount to a folder in the repo?
+
+A bind mount would work, the data would persist either way. But a named volume is managed
+by docker, so it doesn't depend on a path existing on the host and it doesn't end up in
+the repo where git would see it. mlflow.db and mlruns/ are already gitignored for that
+reason.
+
+The bind mount is useful for dev when you want to open the files yourself. Here nothing
+needs to read them from the host, so the volume is cleaner.
+
+
+Q3 - Why does http://mlflow:5000 resolve now when it didn't before?
+
+Compose puts all three services on its own network and runs a dns server on it, so the
+service name mlflow resolves to that container's ip.
+
+In lab 3 the container was alone on the default bridge network and mlflow was a process on
+the laptop, not a container, so there was no name to resolve. host.docker.internal was the
+workaround to get back out to the host.
+
+
+Q4 - Why read INFERENCE_URL from the environment instead of hardcoding http://inference:8000?
+
+inference only resolves inside the compose network. If the name was hardcoded the image
+would only ever work under compose, and docker run on its own would fail on dns.
+
+With the env var the default is localhost for running it alone, and compose overrides it.
+Same reason serve.py reads MLFLOW_TRACKING_URI.
+
+
+Q5 - Why doesn't inference publish a port, and how does the frontend reach it?
+
+Nothing outside needs to talk to it directly. The browser talks to the frontend, and the
+frontend talks to inference from inside the network, where every port is already reachable
+between containers.
+
+Publishing a port opens it on the laptop, so not publishing is one less thing exposed.
+
+
+Q6 - What happens to the inference container if mlflow isn't ready yet?
+
+It crashes. serve.py loads the model in the startup handler, the connection is refused,
+uvicorn logs "Application startup failed. Exiting." and the container exits.
+
+depends_on only waits for the mlflow container to start, not for the server inside it to
+be listening. Compose restarts nothing by default so inference stays down.
+
+Saw it twice. First time mlflow wasn't up yet:
+
+    mlflow.exceptions.MlflowException: API request to endpoint
+    /api/2.0/mlflow/registered-models/alias failed with error code 403
+    ERROR:    Application startup failed. Exiting.
+
+and after a down -v wiped the registry:
+
+    mlflow.exceptions.RestException: RESOURCE_DOES_NOT_EXIST:
+    Registered Model with name=food11 not found
+    ERROR:    Application startup failed. Exiting.
+
+docker compose ps -a shows it as exited while mlflow and frontend stay running.
+
+
+Q7 - docker compose ps, which services publish a port?
+
+SERVICE     STATUS          PORTS
+frontend    Up 3 minutes    0.0.0.0:8501->8501/tcp
+inference   Up 53 seconds   8000/tcp
+mlflow      Up 2 minutes    0.0.0.0:5000->5000/tcp
+
+inference shows 8000/tcp with no arrow, so the port is open inside the network but not
+mapped to the laptop.
+
+Matches the compose file: mlflow and frontend have ports, inference doesn't.
+
+
+Q8 - After promoting a new version, does the prediction come from the new model?
+
+The old one. The model is loaded once at startup and kept in memory, so the running
+container keeps serving whatever was champion when it started. Moved the alias from
+version 1 to 2 while the container was up and nothing changed on its side.
+
+The command is:
+
+    docker compose restart inference
+
+After that the logs show a second "Application startup complete", so it loaded the model
+again and picked up version 2. No rebuild.
+
+(the lab says Staging, but stages are deprecated, so this uses the champion alias from
+lab 3. same idea.)
+
+
+Q9 - Why does restart alone work, no rebuild?
+
+The image only has the code and the python packages. The model is not in it, it's fetched
+from mlflow when the container starts.
+
+A rebuild is only needed when something in the image changes, so serve.py, the deps or the
+Dockerfile. Pointing the alias at a new version changes nothing in the image.
+
+
+Q10 - Is the model still there after down/up? What about down -v?
+
+down then up: still there. food11 version 1 with the champion alias, same as before.
+down removes the containers but not the named volume.
+
+down -v: gone. The registry came back empty and inference crashed with
+RESOURCE_DOES_NOT_EXIST, because -v deletes the volume too, so the new mlflow container
+starts with an empty mlflow.db and had to be re-registered from scratch.
+
+
+Q11 - What would have to change for 3 replicas behind a load balancer, or for mlflow to
+      survive a machine failure?
+
+Compose runs on one machine, so a machine failure takes everything with it. It can start
+replicas but there is no load balancer, no health-based restart on another node and no
+rescheduling.
+
+For replicas you need something that schedules containers across machines and puts a real
+load balancer in front, so kubernetes with a Deployment and a Service, or swarm.
+
+For mlflow to survive you move the state off the machine: postgres instead of the sqlite
+file and s3 or similar instead of the local mlruns folder. Then the container is
+stateless and can be restarted anywhere.
+
+
+NOTE - two changes to the mlflow Dockerfile from the lab
+
+The CMD in the lab doesn't work with serve.py as written, two flags had to be added:
+
+--serve-artifacts --artifacts-destination /mlflow-data/mlruns
+    with --default-artifact-root alone the model is recorded as a path inside the mlflow
+    container, which the inference container can't read. It fails with "No such artifact".
+    serving artifacts makes the client fetch them over http instead.
+
+--allowed-hosts mlflow:5000,127.0.0.1:5000,localhost:5000
+    mlflow 3 rejects any Host header it doesn't know as a dns rebinding attempt, and the
+    compose service name mlflow:5000 is one of those. Without it every call from the
+    inference container comes back 403.
