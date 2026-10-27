@@ -103,9 +103,6 @@ The command is:
 After that the logs show a second "Application startup complete", so it loaded the model
 again and picked up version 2. No rebuild.
 
-(the lab says Staging, but stages are deprecated, so this uses the champion alias from
-lab 3. same idea.)
-
 
 Q9 - Why does restart alone work, no rebuild?
 
@@ -139,18 +136,3 @@ load balancer in front, so kubernetes with a Deployment and a Service, or swarm.
 For mlflow to survive you move the state off the machine: postgres instead of the sqlite
 file and s3 or similar instead of the local mlruns folder. Then the container is
 stateless and can be restarted anywhere.
-
-
-NOTE - two changes to the mlflow Dockerfile from the lab
-
-The CMD in the lab doesn't work with serve.py as written, two flags had to be added:
-
---serve-artifacts --artifacts-destination /mlflow-data/mlruns
-    with --default-artifact-root alone the model is recorded as a path inside the mlflow
-    container, which the inference container can't read. It fails with "No such artifact".
-    serving artifacts makes the client fetch them over http instead.
-
---allowed-hosts mlflow:5000,127.0.0.1:5000,localhost:5000
-    mlflow 3 rejects any Host header it doesn't know as a dns rebinding attempt, and the
-    compose service name mlflow:5000 is one of those. Without it every call from the
-    inference container comes back 403.

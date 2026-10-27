@@ -6,10 +6,6 @@ Q1 - What version number was your model given? What's the difference between a r
 
 Version 1.
 
-(ended up at version 3 later: the lab 2 runs wrote artifacts as local file paths, which
-the container can't read, so the server was restarted with --serve-artifacts and the model
-re-logged so it gets fetched over http. champion points at 3.)
-
 The logged artifact is just a file sitting inside the run folder, tied to that one run.
 The registered model is a name in the registry (food11) with its own version numbers,
 so you ask for it by name instead of by run id. Same files, different way to find them.
