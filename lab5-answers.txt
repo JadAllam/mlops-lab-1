@@ -71,7 +71,25 @@ passes.
 
 Q6 - How long did the run take, and what got faster the second time?
 
-RUNTIME_Q6
+First green run, then an empty commit (git commit --allow-empty -m "ci"):
+
+                run 1     run 2
+    test         15s       16s
+    smoke        59s       54s
+    push        320s       23s
+    ------------------------------
+    total       ~6m30     ~1m35
+
+push got faster, from 320s to 23s. It builds the same image as smoke but with
+cache-from/cache-to type=gha, so the second run pulls the layers from the actions cache
+instead of installing torch again. The build-push step itself was 6s.
+
+test barely moved. setup-uv has enable-cache: true but the first run found nothing to
+restore, and uv sync is only 5s anyway because the lockfile pins the cpu-only torch.
+
+smoke didn't improve either, 59s to 54s. It runs plain docker build with no cache
+configured, on a fresh runner every time, so it reinstalls everything on every run. That
+is the job to fix next if the pipeline gets slow.
 
 
 Q7 - Why tag with the commit sha instead of latest?
@@ -102,7 +120,29 @@ Every third-party uses: line in the workflow runs with whatever rights the token
 
 Q9 - What does the pull request page show, could you still merge?
 
-PR_Q9
+Branch protection on main: pull request required, test and smoke must pass.
+
+Pushed a branch where category_from_filename is off by one, opened a PR. The page shows:
+
+    test     failure
+    smoke    skipped
+    push     skipped
+    mergeable_state: blocked
+
+smoke is skipped, not failed, because of needs: test. The merge button is disabled and
+the API refuses it:
+
+    2 of 2 required status checks have not succeeded: 1 failing.
+
+Could I merge anyway? Only with enforce_admins off. With it off an admin walks straight
+past a red check, which is worth knowing: the rule only holds if admins are included.
+With enforce_admins on nobody merges it, including me.
+
+Against everyone running tests on their laptop: there it depends on each person
+remembering, on the same machine state, and on the same dependency versions. Here the
+check runs on a clean runner from the lockfile, the result is attached to the commit for
+anyone to see, and a failing commit physically cannot reach main. It stops being a
+promise and becomes a rule.
 
 
 Q10 - What did the gate decide for each candidate, and what is 2*se worth?
