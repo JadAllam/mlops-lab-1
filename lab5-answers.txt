@@ -1,0 +1,149 @@
+LAB 5 - ANSWERS
+
+
+Q1 - Why shouldn't a unit test load the real model from mlflow?
+
+Because then the test isn't testing the code any more, it's testing everything around it.
+Ways it fails while serve.py is perfectly correct:
+
+- mlflow isn't running, or the container isn't up yet, so the load times out
+- no model is registered under champion yet, or someone moved the alias
+- the runner has no access to the tracking server at all, which is the case in CI
+- the model is 45MB and loads torch, so the test goes from a second to a minute
+
+A unit test should fail only when the code is wrong.
+
+
+Q2 - What does test_predict_returns_valid_json prove, and what does it not?
+
+Proves: the upload is read, the jpeg is decoded, resized and normalised without throwing,
+the model output is turned into the right json shape, argmax picks the right index, the
+index maps to the right class name, and confidence is a probability between 0 and 1.
+Index 0 has the highest value and the answer is Bread, so the class list isn't shifted.
+
+Doesn't prove: anything about the real model. Not the accuracy, not the preprocessing
+matching what training used, not that the normalisation constants are right, not that the
+real model outputs 11 logits in this order. The fake would answer Bread for a photo of a
+car.
+
+
+Q3 - Which check caught the duplicate, and why is it worse than a corrupted image?
+
+The "no image in two splits" check, by md5 of the file contents.
+
+    before: 43 shared
+    after copying one training/Bread image into evaluation/Bread: 44 shared
+
+A corrupted image is loud. Training crashes, you fix it, you move on. A duplicate is
+silent and it corrupts the number you use to make decisions: the image is in training and
+in the test set, so the model has memorised it and scores on it for free. Test accuracy
+comes out higher than the real thing, and every comparison built on it is wrong. You ship
+the worse model thinking it's better. Nothing ever errors.
+
+Worth noting the mini dataset already fails this check with 43 duplicates, and they come
+from the raw download, not from data.py:
+
+    data/food11_raw/training/0_106.jpg    md5 730837e9
+    data/food11_raw/evaluation/0_131.jpg  md5 730837e9
+
+
+Q4 - Where should validate_data.py run, given CI can't see the data?
+
+1. In data.py itself, at the end of the build, so a dataset that breaks the contract is
+   never written and never gets dvc added.
+
+2. At the start of train.py, before any training, so a bad dataset stops the run instead
+   of producing a model with a meaningless accuracy.
+
+Both run where the data actually is. CI can still run it on a tiny fixture dataset
+committed to git, which checks the validator itself works, not the real data.
+
+
+Q5 - What happens to smoke if a unit test fails? What without needs?
+
+With needs: test, smoke doesn't run at all. It's skipped and the run is red.
+
+Without needs they'd start at the same time on separate runners, so you'd pay for a docker
+build of code you already know is broken, and you'd get two failures to read instead of
+one. needs also makes the order explicit: don't bother building the image until the code
+passes.
+
+
+Q6 - How long did the run take, and what got faster the second time?
+
+RUNTIME_Q6
+
+
+Q7 - Why tag with the commit sha instead of latest?
+
+The sha points at exactly one commit, forever. latest points at whatever was pushed last,
+so what it means changes under you.
+
+Concrete: machine A pulls ghcr.io/.../mlops-lab-1:latest on monday. On tuesday main gets a
+new commit and the pipeline pushes latest again. Machine B pulls latest on wednesday.
+Both say they run latest, both report the same tag in their logs, and they're running
+different code. Neither can tell. With the sha, A says abc123 and B says def456, and you
+can check out either one.
+
+It also means a rollback is just deploying the older sha, which is still there.
+
+
+Q8 - Why declare permissions explicitly, and what could a compromised step do?
+
+The default token has broader rights than the job needs. Declaring contents: read and
+packages: write gives it exactly what it uses, so a step that gets compromised can only
+push a package.
+
+Without that limit, a bad action, or a dependency of one, running with a write-everything
+token could push straight to main, rewrite history, open or close pull requests, change
+the workflow files so the next run does something else, read secrets, or delete releases.
+Every third-party uses: line in the workflow runs with whatever rights the token has.
+
+
+Q9 - What does the pull request page show, could you still merge?
+
+PR_Q9
+
+
+Q10 - What did the gate decide for each candidate, and what is 2*se worth?
+
+Trained two runs on the mini dataset, 3 epochs each:
+
+    lr 0.0001     test_accuracy = 0.7673
+    lr 0.0000001  test_accuracy = 0.0693   (barely above the 1/11 = 0.091 of guessing)
+
+Registered the weak one as v3 and the good one as v4, then ran the gate three times:
+
+    v3, no champion yet  -> promoted, nothing to compare against
+    v4 vs champion v3    -> candidate 0.7673, champion 0.0693
+                            se=0.0077, needs >= 0.0847  -> promoted
+    v3 vs champion v4    -> candidate 0.0693, champion 0.7673
+                            se=0.0128, needs >= 0.7929  -> rejected
+
+Tags written on the versions:
+
+    v4  decision=promoted  candidate_accuracy=0.7673  champion_accuracy=0.0693  champion
+    v3  decision=rejected  candidate_accuracy=0.0693  champion_accuracy=0.7673  challenger
+
+With n=1096 and p=0.7673, se=0.0128, so 2*se = 0.0256, about 2.6 accuracy points. A
+candidate has to beat 76.73% by more than that to take the alias. Anything closer is
+inside the noise of a 1096-image test set and the gate won't move on it.
+
+se depends on p: at p=0.0693 it's 0.0077, so 2*se is only 1.5 points. The bar is widest
+around 50% accuracy and narrows as the model gets very good or very bad.
+
+
+Q11 - Two ways to run promote.py automatically after training.
+
+1. Use a hosted tracking server instead of the laptop. DagsHub gives one per repo, so you
+   put the uri and the token in the repo secrets and a workflow can reach it. Then
+   promote.py runs as a job like anything else.
+
+2. Run it where the training runs. The training script calls it at the end, or a
+   self-hosted runner on the machine that has mlflow picks up the job. The code moves to
+   the server instead of the server being opened to the internet.
+
+
+Q12 - The pipeline
+
+See lab/lab5.md.

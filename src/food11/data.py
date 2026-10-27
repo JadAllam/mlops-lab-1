@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-CATEGORIES = [
+CLASSES = [
     "Bread",
     "Dairy product",
     "Dessert",
@@ -21,8 +21,8 @@ CATEGORIES = [
 ]
 
 SPLITS = ["training", "evaluation", "validation"]
-IMAGE_SIZE = (128, 128)
-MINI_PER_CATEGORY = 100
+IMAGE_SIZE = 128
+MINI_PER_CLASS = 100
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 RAW_DIR = DATA_DIR / "food11_raw"
@@ -30,31 +30,41 @@ PROCESSED_DIR = DATA_DIR / "food11_processed"
 MINI_DIR = DATA_DIR / "food11_processed_mini"
 
 
+def category_from_filename(filename):
+    """'3_120.jpg' -> 'Egg'"""
+    return CLASSES[int(Path(filename).stem.split("_")[0])]
+
+
+def resize_image(img, size=IMAGE_SIZE):
+    """Returns an RGB image of size x size."""
+    return img.convert("RGB").resize((size, size), Image.BILINEAR)
+
+
 def resize_one(job):
     src, dst = job
     with Image.open(src) as img:
-        img.convert("RGB").resize(IMAGE_SIZE, Image.BILINEAR).save(dst, quality=95)
+        resize_image(img).save(dst, quality=95)
 
 
 def build_split(split):
     src_split = RAW_DIR / split
     images = sorted(p for p in src_split.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
 
-    by_category = {name: [] for name in CATEGORIES}
+    by_class = {name: [] for name in CLASSES}
     for path in images:
-        by_category[CATEGORIES[int(path.stem.split("_")[0])]].append(path)
+        by_class[category_from_filename(path.name)].append(path)
 
     jobs = []
     mini_pairs = []
-    for category, paths in by_category.items():
-        full_dir = PROCESSED_DIR / split / category
-        mini_dir = MINI_DIR / split / category
+    for name, paths in by_class.items():
+        full_dir = PROCESSED_DIR / split / name
+        mini_dir = MINI_DIR / split / name
         full_dir.mkdir(parents=True, exist_ok=True)
         mini_dir.mkdir(parents=True, exist_ok=True)
         for i, src in enumerate(paths):
             dst = full_dir / src.name
             jobs.append((src, dst))
-            if i < MINI_PER_CATEGORY:
+            if i < MINI_PER_CLASS:
                 mini_pairs.append((dst, mini_dir / src.name))
 
     with ProcessPoolExecutor() as pool:

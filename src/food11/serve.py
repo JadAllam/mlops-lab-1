@@ -3,12 +3,13 @@
 import io
 import os
 
-import mlflow
 import numpy as np
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from PIL import Image
 
-CATEGORIES = [
+import mlflow
+
+CLASSES = [
     "Bread",
     "Dairy product",
     "Dessert",
@@ -34,6 +35,8 @@ model = None
 @app.on_event("startup")
 def load_model():
     global model
+    if os.environ.get("SKIP_MODEL"):
+        return
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
     model = mlflow.pyfunc.load_model(MODEL_URI)
 
@@ -56,7 +59,9 @@ def health():
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
+    if model is None:
+        raise HTTPException(status_code=503, detail="model not loaded")
     logits = np.asarray(model.predict(preprocess(await file.read())))[0]
     probabilities = softmax(logits)
     index = int(probabilities.argmax())
-    return {"category": CATEGORIES[index], "confidence": float(probabilities[index])}
+    return {"category": CLASSES[index], "confidence": float(probabilities[index])}
