@@ -32,7 +32,7 @@ MINI_DIR = DATA_DIR / "food11_processed_mini"
 
 def category_from_filename(filename):
     """'3_120.jpg' -> 'Egg'"""
-    return CLASSES[int(Path(filename).stem.split("_")[0]) - 1]
+    return CLASSES[int(Path(filename).stem.split("_")[0])]
 
 
 def resize_image(img, size=IMAGE_SIZE):
